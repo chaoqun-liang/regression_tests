@@ -1,24 +1,4 @@
-/*
- * Copyright (C) 2018 ETH Zurich and University of Bologna
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-/* 
- * Mantainer: Luca Valente (luca.valente2@unibo.it)
- */
-
-#include <stdio.h>
+include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include "utils.h"
@@ -34,15 +14,132 @@
 #define BUFFER_SIZE_READ 12
 #define N_CAM 1
 
-#define GPIO_PADDIR_0_31_OFFSET 0x0
-#define GPIO_PADEN_0_31_OFFSET 0x4
-#define GPIO_PADOUT_0_31_OFFSET 0xC
-#define GPIO_GPIOEN_32_63_OFFSET 0x3C
-#define GPIO_PADIN_32_63_OFFSET 0x40
+
+#define OUT 1
+#define IN  0
+
+uint32_t configure_gpio(uint32_t number, uint32_t direction){
+  uint32_t address;
+  uint32_t dir;
+  uint32_t gpioen;
+
+  //--- set GPIO
+  if(number < 32)
+  {
+    if (direction == IN) 
+    {
+
+      address = ARCHI_GPIO_ADDR + GPIO_GPIOEN_OFFSET;
+
+      gpioen = pulp_read32(address);
+      //--- enable GPIO
+      //printf("GPIOEN RD: %x\n",gpioen);
+      gpioen |= (1 << number);
+      //printf("GPIOEN WR: %x\n",gpioen); 
+      pulp_write32(address, gpioen);
+      //--- set direction
+      address = ARCHI_GPIO_ADDR + GPIO_PADDIR_OFFSET;
+      dir = pulp_read32(address);
+      //printf("GPIODIR RD: %x\n",dir);
+      dir |= (0 << number);
+      //printf("GPIODIR WR: %x\n",dir);
+      pulp_write32(address, dir);
+
+    }else if (direction == OUT){ 
+      //--- enable GPIO
+      address = ARCHI_GPIO_ADDR + GPIO_GPIOEN_OFFSET;
+      gpioen = pulp_read32(address);
+      gpioen |= (1 << number);
+      pulp_write32(address, gpioen);
+      //--- set direction
+      dir=gpioen;
+      address = ARCHI_GPIO_ADDR + GPIO_PADDIR_OFFSET;
+      pulp_write32(address, dir);
+    }
+  }else{
+    if (direction == IN)
+    {
+      address = ARCHI_GPIO_ADDR + GPIO_GPIOEN_32_63_OFFSET;
+      gpioen = pulp_read32(address);
+      //--- enable GPIO
+      //printf("GPIOEN RD: %x\n",gpioen);
+      gpioen |= (1 << (number-32));
+      //printf("GPIOEN WR: %x\n",gpioen); 
+      pulp_write32(address, gpioen);
+      //--- set direction
+      address = ARCHI_GPIO_ADDR + GPIO_PADDIR_32_63_OFFSET;
+      dir = pulp_read32(address);
+      //printf("GPIODIR RD: %x\n",dir);
+      dir |= (0 << (number-32));
+      //printf("GPIODIR WR: %x\n",dir);
+      pulp_write32(address, dir);
+    }else if (direction == OUT){
+      //--- enable GPIO
+      address = ARCHI_GPIO_ADDR + GPIO_GPIOEN_32_63_OFFSET;
+      gpioen = pulp_read32(address);
+      gpioen |= (1 << (number-32));
+      pulp_write32(address, gpioen);
+      //--- set direction
+      dir=gpioen;
+      address = ARCHI_GPIO_ADDR + GPIO_PADDIR_32_63_OFFSET;
+      pulp_write32(address, dir);
+    }
+  }
+
+  while(pulp_read32(address) != dir);
+
+}
+
+void set_gpio(uint32_t number, uint32_t value){
+  uint32_t value_wr;
+  uint32_t address;
+  if (number < 32)
+  {
+    address = ARCHI_GPIO_ADDR + GPIO_PADOUT_OFFSET;
+    value_wr = pulp_read32(address);
+    if (value == 1)
+    {
+      value_wr |= (1 << (number));
+    }else{
+      value_wr &= ~(1 << (number));
+    }
+    pulp_write32(address, value_wr);
+  }else{
+    address = ARCHI_GPIO_ADDR + GPIO_PADOUT_32_63_OFFSET;
+    value_wr = pulp_read32(address);
+    if (value == 1)
+    {
+      value_wr |= (1 << (number % 32));
+    }else{
+      value_wr &= ~(1 << (number % 32));
+    }
+    pulp_write32(address, value_wr);
+  }
+
+  while(pulp_read32(address) != value_wr);
+}
 
 
-//#define PRINTF_ON
+uint32_t get_gpio(uint32_t number){
+  uint32_t value_rd;
+  uint32_t address;
+  uint32_t bit;
+  if (number < 32)
+  {
+    address = ARCHI_GPIO_ADDR + GPIO_PADIN_OFFSET;
+    value_rd = pulp_read32(address);
+    bit= 0x1 & (value_rd>>number);
+  }else{
+    address = ARCHI_GPIO_ADDR + GPIO_PADIN_32_63_OFFSET;
+    value_rd = pulp_read32(address);
+    bit= 0x1 & (value_rd>>(number%32));
+  }  
+  //printf("GPIO %d: HEX:%x Bit:%d \n",number,value_rd,bit);
+  return bit;
+}
 
+
+  
 int main(){
   int error=0;
 
@@ -55,31 +152,25 @@ int main(){
   uint16_t *rx_addr= (uint16_t*) 0x1C001000;
 
   int j;
-
-   #ifdef FPGA_EMULATION
-    return 0;
-  #else
-    #ifdef SIMPLE_PAD
-      return 0;
-    #else
-       //Config pad_gpio_b_00 as GPIO
-      alsaqr_periph_padframe_periphs_pad_gpio_b_00_mux_set( 1 );
-
-      //Config padframe on CAM0
-      alsaqr_periph_padframe_periphs_pad_gpio_d_00_mux_set( 1 );
-      alsaqr_periph_padframe_periphs_pad_gpio_d_01_mux_set( 1 );
-      alsaqr_periph_padframe_periphs_pad_gpio_d_02_mux_set( 1 );
-      alsaqr_periph_padframe_periphs_pad_gpio_d_03_mux_set( 1 );
-      alsaqr_periph_padframe_periphs_pad_gpio_d_04_mux_set( 1 );
-      alsaqr_periph_padframe_periphs_pad_gpio_d_05_mux_set( 1 );
-      alsaqr_periph_padframe_periphs_pad_gpio_d_06_mux_set( 1 );
-      alsaqr_periph_padframe_periphs_pad_gpio_d_07_mux_set( 1 );
-      alsaqr_periph_padframe_periphs_pad_gpio_d_08_mux_set( 1 );
-      alsaqr_periph_padframe_periphs_pad_gpio_d_09_mux_set( 1 );
-      alsaqr_periph_padframe_periphs_pad_gpio_d_10_mux_set( 1 );
-    #endif    
-  #endif 
-
+  //config pad_gpio as GPIO
+  configure_gpio(1, 1);
+  // need to config padframe on cam
+  set_gpio(9,1);
+  set_gpio(10,1);
+    set_gpio(11,1);
+	 set_gpio(12,1);
+	  set_gpio(13,1); 
+	  set_gpio(14,1);
+	  set_gpio(15,1);
+	  set_gpio(16,1);
+	  set_gpio(17,1);
+	  set_gpio(18,1);
+	  set_gpio(19,1);
+	  
+  
+  
+  
+  
   #ifdef FPGA_EMULATION
   int baud_rate = 115200;
   int test_freq = 50000000;
@@ -89,20 +180,9 @@ int main(){
   int test_freq = 100000000;
   #endif  
   uart_set_cfg(0,(test_freq/baud_rate)>>4);
-
-  //Set GPIO 0 direction as OUT
-  address = ARCHI_GPIO_ADDR + GPIO_PADDIR_0_31_OFFSET;
-  val_wr = 0x1;
-  pulp_write32(address, val_wr);
-  while(pulp_read32(address) != val_wr);
-
-  //Disable the Camera VIP by GPIO 0 -> 0
-  address = ARCHI_GPIO_ADDR + GPIO_PADOUT_0_31_OFFSET;
-  val_wr = 0x0;
-  pulp_write32(address, val_wr);
-  while(pulp_read32(address) != val_wr);
   
-  #ifdef PRINTF_ON
+  
+    #ifdef PRINTF_ON
     printf("Camera Vip Disabled\n");
     uart_wait_tx_done();
   #endif
